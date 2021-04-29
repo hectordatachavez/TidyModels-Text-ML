@@ -1,0 +1,318 @@
+---
+title: ''
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Knit set up
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r setup_libraries, warning=FALSE, echo=FALSE}
+
+# Load libraries
+library(tidymodels)
+library(tidyverse)
+library(tidytext)
+library(ggtext)
+theme_set(theme_light())
+
+library(textrecipes)
+library(themis)
+
+#devtools::install_github("tidymodels/parsnip")
+#library(parsnip)
+
+```
+
+
+# Which #TidyTuesday Netflix titles are movies and which are TV shows?
+
+This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of Julia Silge. In that episode, Julia walks through how to build features for modeling from text.
+
+My goals for this project are:
+- To build features from description text
+- To combine subword features from the item title to the model
+- To build a SVM model
+
+Optional:
+- To build a XGBoost model
+- To build a logistic regression model?
+- To build model stacks
+
+## Load Data
+```{r load_data, echo=FALSE, warning=FALSE}
+
+# Load data from netflix movie and TV show titles from the tidyverse
+netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-20/netflix_titles.csv")
+
+```
+
+## Explore Data
+```{r explore_data, echo=FALSE, warning=FALSE}
+
+# How many titles in the dataset?
+netflix_titles %>%
+  count(type)
+
+
+# What do the descriptions look like? 
+netflix_titles %>%
+  slice_sample(n = 10) %>%
+  pull(description)
+
+# What do titles look like?
+netflix_titles %>%
+  slice_sample(n = 10) %>%
+  pull(title)
+```
+
+
+```{r data_exploration_description_plot, echo=FALSE, warning=FALSE}
+
+# What are the top words in the descritption each category (Movie, TV Show)?
+netflix_titles %>%
+  # create tokens at the word level for the description column
+  unnest_tokens(word, description) %>%
+  # remove stopwords
+  anti_join(get_stopwords()) %>%
+  # get frequencies for each word for each category, sort in desc order
+  count(type, word, sort = TRUE) %>%
+  # group by category
+  group_by(type) %>%
+  # get the top 15 most commonly used words
+  slice_max(n, n = 15) %>%
+  # ungroup
+  ungroup() %>%
+  # reorder word column by frequency and category
+  mutate(word = reorder_within(word, n, type)) %>%
+  # Plot frequencies
+  ggplot(aes(n, word, fill = type)) +
+  geom_col(show.legend = FALSE, alpha = 0.8) +
+  scale_y_reordered() +
+  facet_wrap(~type, scales = "free") +
+  labs(
+    x = "Word frequency", y = NULL,
+    title = "<strong>Top words in Netflix descriptions of <span style = 'color:#F8766D'>Movies</span> and <span style = 'color:#00BFC4'>TV Shows</span> by frequency</strong>",
+    subtitle = "After removing stop words"
+  ) +
+  theme(plot.title = element_markdown(),  
+        plot.title.position = "plot" )
+
+```
+
+
+```{r data_exploration_title_plot, echo=FALSE, warning=FALSE}
+
+# What are the top words in the title of each category (Movie, TV Show)?
+netflix_titles %>%
+  # create tokens at the word level for the title column
+  unnest_tokens(word, title) %>%
+  # remove stopwords
+  anti_join(get_stopwords()) %>%
+  # get frequencies for each word for each category, sort in desc order
+  count(type, word, sort = TRUE) %>%
+  # group by category
+  group_by(type) %>%
+  # get the top 15 most commonly used words
+  slice_max(n, n = 15) %>%
+  # ungroup
+  ungroup() %>%
+  # reorder word column by frequency and category
+  mutate(word = reorder_within(word, n, type)) %>%
+  # Plot frequencies
+  ggplot(aes(n, word, fill = type)) +
+  geom_col(show.legend = FALSE, alpha = 0.8) +
+  scale_y_reordered() +
+  facet_wrap(~type, scales = "free") +
+  labs(
+    x = "Word frequency", y = NULL,
+    title = "<strong>Top words in Netflix Titles of <span style = 'color:#F8766D'>Movies</span> and <span style = 'color:#00BFC4'>TV Shows</span> by frequency</strong>",
+    subtitle = "After removing stop words"
+  ) +
+  theme(plot.title = element_markdown(),  
+        plot.title.position = "plot" )
+```
+
+
+## Build a model
+```{r tidymodel_prep, echo=FALSE, warning=FALSE}
+
+# Set seed for reproducibility
+set.seed(123)
+# Define the splits in the data
+netflix_split <- netflix_titles %>%
+  select(type, description) %>%
+  # stratify split samples by type (TV Shows vs Movie). The sample is not balanced (not a 50:50 split). Thus, we must take care that the splitting is balanced.
+  # The inital split is 3/4 to training, 1/4 to testing
+  initial_split(strata = type)
+
+# Define the training set
+netflix_train <- training(netflix_split)
+# Define the testing set
+netflix_test <- testing(netflix_split)
+
+
+# Set seed for reproducibility
+set.seed(234)
+# Define the CV folds in the training dataset, stratified again by type
+netflix_folds <- vfold_cv(netflix_train, strata = type)
+
+# Print the sample division by fold
+# netflix_folds
+```
+
+
+```{r feature_engineering, echo=FALSE, warning=FALSE}
+# create our feature engineering recipe and our model, and then put them together in a modeling workflow
+
+netflix_rec <- 
+  # Define the model and the (training) data
+  recipe(type ~ description, data = netflix_train) %>%
+  # Define the steps of processing
+  # tokenize text in description
+  step_tokenize(description) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(description, max_tokens = 1e3) %>%
+  # convert tokelist into a term-frequency-inverse document freq (columns with 0-1)
+  step_tfidf(description) %>%
+  # normalize all 0-1 columns
+  step_normalize(all_numeric_predictors()) %>%
+  # generate new examples of the minority class using nearest neighbors of these cases
+  # This steps serves to create new data as the dataset is unbalances: move movies than TV shows
+  step_smote(type)
+
+
+# Print the recipe
+# netflix_rec
+
+```
+
+
+```{r model_recipe}
+# Define the model used to predict type by description tokens
+# SVM linear
+svm_spec <- svm_linear() %>%
+  # set engine to linear SVM
+  set_engine("LiblineaR") %>%
+  # define more to classification (categorical prediction)
+  set_mode("classification")
+  
+```
+
+```{r workflow_set}
+
+# Define workflow
+netflix_wf <- workflow() %>%
+  # add recipe
+  add_recipe(netflix_rec) %>%
+  # add model
+  add_model(svm_spec)
+
+# Print workflow
+netflix_wf
+```
+
+
+```{r workflow_fit}
+# Set up parallel processing
+doParallel::registerDoParallel()
+
+# set seed for reproducibility
+set.seed(123)
+
+# Fit the workflow to the CV folds of the training data
+svm_rs <- fit_resamples(
+  # Pass the workflow
+  netflix_wf,
+  # to the folds
+  netflix_folds,
+  # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
+  metrics = metric_set(accuracy, recall, precision),
+  # save the preductions from the model to make a confusion matrix
+  control = control_resamples(save_pred = TRUE)
+)
+
+```
+
+## Model Performance
+
+```{r model_performance}
+# Get the metrics from the model
+collect_metrics(svm_rs)
+
+# We can use conf_mat_resampled() to compute a separate confusion matrix for each resample, and then average the cell counts
+svm_rs %>%
+  conf_mat_resampled(tidy = FALSE) %>%
+  autoplot()
+```
+
+
+## Final Model Fit
+
+```{r final_model_fit}
+# Fit our model on last time to the whole training set (rather than resampled data) and evaluate on the testing set.
+
+# The last fit function does the model training and the testing automatically, following the workflow defined
+final_fitted <- last_fit(
+  netflix_wf,
+  # contains the training and the testing datasets
+  netflix_split,
+  # define custom metrics
+  metrics = metric_set(accuracy, recall, precision)
+)
+
+
+```
+
+```{r final_model_performance}
+# get the performance metrics of the fitted model--about the same as in the CV fit
+collect_metrics(final_fitted)
+
+# Make a confusion matrix
+collect_predictions(final_fitted) %>%
+  conf_mat(type, .pred_class)
+```
+
+
+## Feature Importance
+```{r pull_workflow}
+# Extract the workflow object from the final model object
+netflix_fit <- pull_workflow_fit(final_fitted$.workflow[[1]])
+
+# passing he tidy function to the pulled workflow object arranges the estimates as a tibble
+tidy(netflix_fit) %>%
+  # arrange based on the coefficient of each term
+  arrange(estimate)
+```
+
+```{r feature_importance_plot}
+# get the tibble with coeficients and terms
+tidy(netflix_fit) %>%
+  # remove the estimate for 'Bias' the intercept of this model
+  filter(term != "Bias") %>%
+  # group by whether or not the estimate is >0, rename this to "sign"
+  group_by(sign = estimate > 0) %>%
+  # get only the top 15 highest estimate (in absolute terms)
+  slice_max(abs(estimate), n = 15) %>%
+  # ungroup
+  ungroup() %>%
+  # Clean the terms and the sign column
+  mutate(
+    term = str_remove(term, "tfidf_description_"),
+    sign = if_else(sign, "More from TV shows", "More from movies")
+  ) %>%
+  # set up the plot
+  ggplot(aes(abs(estimate), fct_reorder(term, abs(estimate)), fill = sign)) +
+  geom_col(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~sign, scales = "free") +
+  labs(
+    x = "Coefficient from linear SVM", y = NULL,
+    title = "<strong>Which words are most predictive of <span style = 'color:#F8766D'>Movies</span> vs. <span style = 'color:#00BFC4'>TV Shows</span>?</strong>",
+    subtitle = "For description text of movies and TV shows on Netflix"
+  ) +
+  theme(plot.title = element_markdown(),  
+        plot.title.position = "plot" )
+```
+
