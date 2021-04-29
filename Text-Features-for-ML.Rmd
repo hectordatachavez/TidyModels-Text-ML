@@ -1,5 +1,5 @@
 ---
-title: ''
+title: 'Building features for predicting classes based on text'
 output: html_document
 ---
 
@@ -33,7 +33,7 @@ This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.yo
 
 My goals for this project are:
 - To build features from description text
-- To combine subword features from the item title to the model
+- To combine sub-word features from the item title to the model
 - To build a SVM model
 
 Optional:
@@ -49,6 +49,7 @@ netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/ti
 
 ```
 
+
 ## Explore Data
 ```{r explore_data, echo=FALSE, warning=FALSE}
 
@@ -62,6 +63,8 @@ netflix_titles %>%
   slice_sample(n = 10) %>%
   pull(description)
 
+
+
 # What do titles look like?
 netflix_titles %>%
   slice_sample(n = 10) %>%
@@ -69,13 +72,38 @@ netflix_titles %>%
 ```
 
 
-```{r data_exploration_description_plot, echo=FALSE, warning=FALSE}
+### Description field
 
-# What are the top words in the descritption each category (Movie, TV Show)?
+This column contains the description of the Movies and TV Shows: are all about 150 characters long. 
+
+The histogram also highlights the issue of balance in the sample: there are more movies than TV Shows.
+```{r data_exploration_plot, echo=FALSE, warning=FALSE}
+
+# Histogram of
+netflix_titles %>%
+  select(type, description) %>%
+  mutate(n_char = nchar(description)) %>%
+  ggplot(aes(x=n_char, fill=type)) +
+  geom_histogram(show.legend = FALSE, alpha = 0.8) + 
+  labs(
+    x = "Number of Characters", y = "Frequency",
+    title = "<strong>Number of characters Netflix descriptions of <span style = 'color:#F8766D'>Movies</span> and <span style = 'color:#00BFC4'>TV Shows</span> by frequency</strong>",
+    subtitle = NULL
+  ) +
+  theme(plot.title = element_markdown(),  
+        plot.title.position = "plot" )
+
+```
+
+
+Word frequency analysis of the description field show some differences in the top words for each category as well as some similarities.
+
+```{r data_exploration_description_plot, echo=FALSE, warning=FALSE}
+# What are the top words in the description each category (Movie, TV Show)?
 netflix_titles %>%
   # create tokens at the word level for the description column
   unnest_tokens(word, description) %>%
-  # remove stopwords
+  # remove stop-words
   anti_join(get_stopwords()) %>%
   # get frequencies for each word for each category, sort in desc order
   count(type, word, sort = TRUE) %>%
@@ -99,9 +127,51 @@ netflix_titles %>%
   ) +
   theme(plot.title = element_markdown(),  
         plot.title.position = "plot" )
+```
+
+#### Bigrams
+```{r data_exploration_description_bigram_plot}
+# What are the top words in the description each category (Movie, TV Show)?
+netflix_titles %>%
+  # create tokens bigram tokens for the description field
+  unnest_tokens(bigram, description, token = "ngrams", n = 2 ) %>%
+  # separaye the bi-gram into two columns: word1 and word 2
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  # remove stop words from the bi grams
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  # Unite back the filteres bi-grams into one column
+  unite(bigram, word1, word2, sep = " ") %>%
+  # get frequencies for each word for each category, sort in desc order
+  count(type, bigram, sort = TRUE) %>%
+  # group by category
+  group_by(type) %>%
+  # get the top 15 most commonly used words
+  slice_max(n, n = 15) %>%
+  # ungroup
+  ungroup() %>%
+  # reorder word column by frequency and category
+  mutate(bigram = reorder_within(bigram, n, type)) %>%
+  # Plot frequencies
+  ggplot(aes(n, bigram, fill = type)) +
+  geom_col(show.legend = FALSE, alpha = 0.8) +
+  scale_y_reordered() +
+  facet_wrap(~type, scales = "free") +
+  labs(
+    x = "Word frequency", y = NULL,
+    title = "<strong>Top bigrams in Netflix descriptions of <span style = 'color:#F8766D'>Movies</span> and <span style = 'color:#00BFC4'>TV Shows</span> by frequency</strong>",
+    subtitle = "After removing stop words"
+  ) +
+  theme(plot.title = element_markdown(),  
+        plot.title.position = "plot" )
 
 ```
 
+
+
+### Title field
+
+Words in the title of the TV Show or Movie are not unique to each category. "Love", for example, is one of the frequent word in the titles of both movies and TV shows. Similarly with "world", "life", "little", "one". This field does not seem to contain enough information to help a model differentiate TV Shows from Movies based on the title.
 
 ```{r data_exploration_title_plot, echo=FALSE, warning=FALSE}
 
@@ -137,7 +207,7 @@ netflix_titles %>%
 
 
 ## Build a model
-```{r tidymodel_prep, echo=FALSE, warning=FALSE}
+```{r original_model_prep, echo=FALSE, warning=FALSE}
 
 # Set seed for reproducibility
 set.seed(123)
@@ -163,8 +233,7 @@ netflix_folds <- vfold_cv(netflix_train, strata = type)
 # netflix_folds
 ```
 
-
-```{r feature_engineering, echo=FALSE, warning=FALSE}
+```{r original_model_recipe, echo=FALSE, warning=FALSE}
 # create our feature engineering recipe and our model, and then put them together in a modeling workflow
 
 netflix_rec <- 
@@ -187,10 +256,7 @@ netflix_rec <-
 # Print the recipe
 # netflix_rec
 
-```
 
-
-```{r model_recipe}
 # Define the model used to predict type by description tokens
 # SVM linear
 svm_spec <- svm_linear() %>%
@@ -198,10 +264,10 @@ svm_spec <- svm_linear() %>%
   set_engine("LiblineaR") %>%
   # define more to classification (categorical prediction)
   set_mode("classification")
-  
+
 ```
 
-```{r workflow_set}
+```{r original_workflow_set}
 
 # Define workflow
 netflix_wf <- workflow() %>%
@@ -211,11 +277,9 @@ netflix_wf <- workflow() %>%
   add_model(svm_spec)
 
 # Print workflow
-netflix_wf
-```
+# netflix_wf
 
 
-```{r workflow_fit}
 # Set up parallel processing
 doParallel::registerDoParallel()
 
@@ -233,8 +297,116 @@ svm_rs <- fit_resamples(
   # save the preductions from the model to make a confusion matrix
   control = control_resamples(save_pred = TRUE)
 )
+```
+
+
+
+```{r model_prep_comb, echo=FALSE, warning=FALSE}
+
+# Set seed for reproducibility
+set.seed(1234)
+# Define the splits in the data
+netflix_split_comb <- netflix_titles %>%
+  select(type, description, title) %>%
+  # stratify split samples by type (TV Shows vs Movie). The sample is not balanced (not a 50:50 split). Thus, we must take care that the splitting is balanced.
+  # The inital split is 3/4 to training, 1/4 to testing
+  initial_split(strata = type)
+
+# Define the training set
+netflix_train_comb <- training(netflix_split_comb)
+# Define the testing set
+netflix_test_comb <- testing(netflix_split_comb)
+
+
+# Set seed for reproducibility
+set.seed(2345)
+# Define the CV folds in the training dataset, stratified again by type
+netflix_folds_comb <- vfold_cv(netflix_train_comb, strata = type)
+
+# Print the sample division by fold
+# netflix_folds_comb
 
 ```
+
+
+```{r model_recipe_comb}
+
+# In this model recipe, I'm combining the tokens from description with the sub-word level tokens for predicting type
+
+netflix_rec_comb <- 
+  # Define the model and the (training) data
+  # Type is explained by the text in description and in title
+  recipe(type ~ description + title, data = netflix_train_comb) %>%
+  # Define the steps of processing
+  # tokenize text in description
+  step_tokenize(description) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(description, max_tokens = 1e3) %>%
+  # convert tokelist into a term-frequency-inverse document freq (columns with 0-1)
+  step_tfidf(description) %>%
+  # tokenize
+  step_tokenize(title,
+    engine = "tokenizers.bpe",
+    training_options = list(vocab_size = 200)
+  ) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(title, max_tokens = 200) %>%
+  step_tf(title) %>%
+  # normalize all 0-1 columns
+  step_normalize(all_numeric_predictors()) %>%
+  # step_smote generates new examples of the minority class using nearest neighbors of these cases
+  # This steps serves to create new data as the dataset is unbalances: move movies than TV shows
+  step_smote(type)
+
+
+# Print the recipe
+netflix_rec_comb
+
+
+# Define the model used to predict type by description tokens
+# SVM linear
+svm_spec <- svm_linear() %>%
+  # set engine to linear SVM
+  set_engine("LiblineaR") %>%
+  # define more to classification (categorical prediction)
+  set_mode("classification")
+```
+
+
+
+```{r workflow_set_comb}
+
+# Define workflow
+netflix_wf_comb <- workflow() %>%
+  # add recipe
+  add_recipe(netflix_rec_comb) %>%
+  # add model
+  add_model(svm_spec)
+
+# Print workflow
+# netflix_wf_comb
+
+
+# Set up parallel processing
+doParallel::registerDoParallel()
+
+# set seed for reproducibility
+set.seed(3456)
+# Fit the workflow to the CV folds of the training data
+svm_rs <- fit_resamples(
+  # Pass the workflow
+  netflix_wf_comb,
+  # to the folds
+  netflix_folds_comb,
+  # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
+  metrics = metric_set(accuracy, recall, precision),
+  # save the preductions from the model to make a confusion matrix
+  control = control_resamples(save_pred = TRUE)
+)
+```
+
+
+
 
 ## Model Performance
 
@@ -256,13 +428,12 @@ svm_rs %>%
 
 # The last fit function does the model training and the testing automatically, following the workflow defined
 final_fitted <- last_fit(
-  netflix_wf,
+  netflix_wf_comb,
   # contains the training and the testing datasets
-  netflix_split,
+  netflix_split_comb,
   # define custom metrics
   metrics = metric_set(accuracy, recall, precision)
 )
-
 
 ```
 
@@ -300,7 +471,8 @@ tidy(netflix_fit) %>%
   ungroup() %>%
   # Clean the terms and the sign column
   mutate(
-    term = str_remove(term, "tfidf_description_"),
+    term = str_remove(term, "tfidf_"),
+    term = str_remove(term, "tf_"),
     sign = if_else(sign, "More from TV shows", "More from movies")
   ) %>%
   # set up the plot
