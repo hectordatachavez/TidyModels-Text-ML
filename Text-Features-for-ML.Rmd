@@ -1,33 +1,12 @@
 ---
-title: 'Building features for predicting classes based on text'
+title: 'Building features from text to predicting classes'
 output: github_document
 editor_options: 
   chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
-# Knit set up
 knitr::opts_chunk$set(echo = TRUE)
-
-```
-
-```{r setup_libraries, warning=FALSE, echo=FALSE, message=FALSE}
-
-# Load libraries
-library(tidyverse)
-library(tidymodels) 
-library(tidytext)
-library(textrecipes)
-library(workflowsets)
-library(themis)
-library(ggtext)
-library(patchwork)
-theme_set(theme_light())
-
-# At the time of making this script (April 2021), the SVM model was only available in the GitHub, development version of the parsnip package. 
-#devtools::install_github("tidymodels/parsnip")
-#library(parsnip)
-
 ```
 
 # Which \#TidyTuesday Netflix titles are movies and which are TV shows?
@@ -57,9 +36,27 @@ In doing so, I would like to practice using the `tidymodels` and `textrecipes` R
 
 The data used for this project is the [week 17 dataset on Netflix Titles](https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-04-20/readme.md) of the [\#TidyTuesday](https://github.com/rfordatascience/tidytuesday).
 
+```{r setup_libraries, warning=FALSE, echo=FALSE, message=FALSE}
+
+# Load libraries
+library(tidyverse)
+library(tidymodels) 
+library(tidytext)
+library(textrecipes)
+library(workflowsets)
+library(themis)
+library(ggtext)
+library(patchwork)
+theme_set(theme_light())
+
+# At the time of making this script (April 2021), the SVM model was only available in the GitHub, development version of the parsnip package. 
+#devtools::install_github("tidymodels/parsnip")
+
+```
+
 ## Load Data
 
-```{r load_data, echo=FALSE, warning=FALSE}
+```{r load_data, echo=FALSE, warning=FALSE, message=FALSE}
 
 # Load data from netflix movie and TV show titles from the tidyverse
 netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-20/netflix_titles.csv")
@@ -70,7 +67,7 @@ netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/ti
 
 There are more Movies than TV-shows in the dataset.
 
-```{r explore_data, echo=FALSE, warning=FALSE}
+```{r explore_data, echo=FALSE, warning=FALSE, message=FALSE}
 
 # How many titles in the dataset?
 netflix_titles %>%
@@ -94,7 +91,7 @@ This column contains the description of the Movies and TV Shows: are all around 
 
 A histogram of the number of characters per description by type also highlights the issue of balance in the sample: there are more movies than TV Shows.
 
-```{r data_exploration_plot, echo=FALSE, warning=FALSE}
+```{r data_exploration_plot, echo=FALSE, warning=FALSE, message=FALSE}
 
 # Histogram of number of characters per description by type
 netflix_titles %>%
@@ -114,7 +111,7 @@ netflix_titles %>%
 
 Word frequency analysis of the description field show some differences in the top words for each category as well as some similarities.
 
-```{r data_exploration_description_plot, echo=FALSE, warning=FALSE}
+```{r data_exploration_description_plot, echo=FALSE, warning=FALSE, message=FALSE}
 
 # What are the top words in the description each category (Movie, TV Show)?
 netflix_titles %>%
@@ -190,8 +187,6 @@ netflix_titles %>%
         strip.text.x = element_blank())
 
 ```
-
-
 
 ### Title field
 
@@ -276,10 +271,9 @@ netflix_titles %>%
 
 ```
 
-
 ## Set up for tidy-modeling
 
-We first define the split in the original data into training and testing set (75%, 25%, rexpectively). Then, we define the cross-validation folds in the training set.
+We first define the split in the original data into training and testing set (75% and 25%, respectively). Then, we define the cross-validation folds in the training set.
 
 ```{r model_prep, echo=FALSE, warning=FALSE}
 
@@ -307,19 +301,21 @@ netflix_folds <- vfold_cv(netflix_train, strata = type)
 netflix_folds
 ```
 
-
 ## Define model recipes
 
 We will define four model recipes:
-    -   using only tokens from description
-    -   using tokens from description + tokens from title
-    -   using n-grams from description
-    -   using tokens from description + sub-word features from the title
+
+-   recipe 1: using only tokens from description
+
+-   recipe 2: using tokens from description + tokens from title
+
+-   recipe 3: using n-grams from description
+
+-   recipe 4: using tokens from description + sub-word features from the title
 
 For all recipes, we will use `step_smote` on type. This function generates new examples of the minority class using nearest neighbors of these cases. It helps us create new data as the dataset is unbalanced: move movies than TV shows.
 
-
-```{r model_recipes, echo=FALSE, warning=FALSE}
+```{r model_recipes, echo=FALSE, warning=FALSE, message=FALSE}
 # create our feature engineering recipe and our model, and then put them together in a modeling workflow
 
 # Recipe 1: using only tokens from description
@@ -419,7 +415,7 @@ netflix_rec4
 
 ```
 
-## Define model: tye and engine
+## Define model: type and engine
 
 For this project, we will use one model: [a linear support-vector machine classification model](https://parsnip.tidymodels.org/reference/svm_linear.html). All recipes defines above will be passed to this model.
 
@@ -435,8 +431,7 @@ svm_spec <- svm_linear() %>%
   set_mode("classification")
 ```
 
-
-## Define worlflow set
+## Define workflow set
 
 ```{r workflow_set}
 
@@ -458,6 +453,7 @@ netflix_wf
 ```
 
 ## Fit model
+
 ```{r fit_svm2workflow}
 # Set up parallel processing
 doParallel::registerDoParallel()
@@ -479,11 +475,9 @@ svm_rs <- netflix_wf %>%
 
 ```
 
-
 ## Model Performance & Model Selection
 
 Model recipe 4 and 1 perform best out of the recipes here defined (based on accuracy, precision, and recall).
-
 
 ```{r model_performance}
 
@@ -503,7 +497,7 @@ svm_rs %>%
 
 ## Collect predictions
 # Returns a large tibble with .pred_class for each recipe
-one <- collect_predictions(svm_rs) %>%
+collect_predictions(svm_rs) %>%
   # get only predictions for the best model
   filter(wflow_id == "base_svm_linear") %>%
   # get the confusion matrix
@@ -516,7 +510,7 @@ one <- collect_predictions(svm_rs) %>%
 
 
 # Returns a large tibble with .pred_class for each recipe
-four <- collect_predictions(svm_rs) %>%
+collect_predictions(svm_rs) %>%
   # get only predictions for the second-best model
   filter(wflow_id == "tokens_desc_subwork_title_svm_linear") %>%
   # get the confusion matrix
@@ -529,17 +523,16 @@ four <- collect_predictions(svm_rs) %>%
 
 
 # Set plot canvas
-patwork_confmat <- one + four
-
-# Print plots
-patwork_confmat + plot_annotation(
-  title = 'CONFUSION MATRIX'
-  )
+# patwork_confmat <- one + four
+# 
+# # Print plots
+# patwork_confmat + plot_annotation(
+#   title = 'CONFUSION MATRIX'
+#   )
 
 ```
 
 Model 1 predicting type based on tokens from the description--the original from Julia Silge's [post](https://juliasilge.com/blog/netflix-titles/)--is the simplest and thus the preferred best of this set.
-
 
 ## Final Model Fit
 
@@ -562,7 +555,6 @@ final_fitted <- svm_rs %>%
 
 ```
 
-
 ```{r final_model_performance}
 # get the performance metrics of the fitted model--about the same as in the CV fit
 collect_metrics(final_fitted)
@@ -579,7 +571,6 @@ collect_predictions(final_fitted) %>%
 
 Performance is about the same as that of recipe one with the training data.
 
-
 ## Feature Importance
 
 For this model recipe, let's extract the coefficients of the most important terms in the model.
@@ -595,7 +586,7 @@ feature_imp <- tidy(netflix_fit) %>%
 
 ```
 
-Make a plot of the 15 most important terms in predicting type of Netflix title based on thei coefficients.
+Make a plot of the 15 most important terms in predicting type of Netflix title based on their coefficients.
 
 ```{r feature_importance_plot}
 # get the tibble with coeficients and terms
