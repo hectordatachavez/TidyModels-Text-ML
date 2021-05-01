@@ -543,14 +543,13 @@ Model 1 predicting type based on tokens from the description--the original from 
 
 ## Final Model Fit
 
-```{r final_model_fit}
-# Fit our model on last time to the whole training set and evaluate on the testing set.
+Now, we extract the best recipe, fit it to the complete training set, and perform predictions on the testing set.
 
+```{r final_model_fit}
 # Select best from workflow set
 best_recipe <- svm_rs %>%
             pull_workflow_set_result("base_svm_linear") %>%
             select_best()
-
 
 # The last fit function does the model training and the testing automatically, following the workflow defined
 final_fitted <- svm_rs %>%
@@ -563,30 +562,44 @@ final_fitted <- svm_rs %>%
 
 ```
 
+
 ```{r final_model_performance}
 # get the performance metrics of the fitted model--about the same as in the CV fit
 collect_metrics(final_fitted)
 
 # Make a confusion matrix
 collect_predictions(final_fitted) %>%
-  conf_mat(type, .pred_class)
+  conf_mat(type, .pred_class) %>%
+  autoplot() +
+  labs( 
+    title = "Confusion matrix: testing data"
+    )
+
 ```
 
+Performance is about the same as that of recipe one with the training data.
+
+
 ## Feature Importance
+
+For this model recipe, let's extract the coefficients of the most important terms in the model.
 
 ```{r pull_workflow}
 # Extract the workflow object from the final model object
 netflix_fit <- pull_workflow_fit(final_fitted$.workflow[[1]])
 
-# passing he tidy function to the pulled workflow object arranges the estimates as a tibble
-tidy(netflix_fit) %>%
-  # arrange based on the coefficient of each term
-  arrange(estimate)
+# passing the tidy function to the pulled workflow object arranges the estimates as a tibble
+feature_imp <- tidy(netflix_fit) %>%
+              # arrange based on the coefficient of each term
+              arrange(estimate)
+
 ```
+
+Make a plot of the 15 most important terms in predicting type of Netflix title based on thei coefficients.
 
 ```{r feature_importance_plot}
 # get the tibble with coeficients and terms
-tidy(netflix_fit) %>%
+feature_imp %>%
   # remove the estimate for 'Bias' the intercept of this model
   filter(term != "Bias") %>%
   # group by whether or not the estimate is >0, rename this to "sign"
@@ -598,7 +611,6 @@ tidy(netflix_fit) %>%
   # Clean the terms and the sign column
   mutate(
     term = str_remove(term, "tfidf_description_"),
-    term = str_remove(term, "tf_title_"),
     sign = if_else(sign, "More from TV shows", "More from movies")
   ) %>%
   # set up the plot
@@ -609,7 +621,10 @@ tidy(netflix_fit) %>%
     x = "Coefficient from linear SVM", y = NULL,
     title = "<strong>Which words are most predictive of <span style = 'color:#F8766D'>Movies</span> vs. <span style = 'color:#00BFC4'>TV Shows</span>?</strong>",
     subtitle = "For description text of movies and TV shows on Netflix"
-  ) +
+      ) +
   theme(plot.title = element_markdown(),  
-        plot.title.position = "plot" )
+        plot.title.position = "plot" , 
+        strip.background = element_blank(),
+        strip.text.x = element_blank()
+        )
 ```
