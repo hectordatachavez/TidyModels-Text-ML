@@ -18,6 +18,7 @@ library(tidyverse)
 library(tidymodels) 
 library(tidytext)
 library(textrecipes)
+library(workflowsets)
 library(themis)
 library(ggtext)
 theme_set(theme_light())
@@ -30,9 +31,9 @@ theme_set(theme_light())
 
 # Which \#TidyTuesday Netflix titles are movies and which are TV shows?
 
-This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of Julia Silge. In that post, Julia walks through how to build features from text for tidymodeling.
+This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of the fabulous [Julia Silge](https://github.com/juliasilge?tab=repositories). In that post, Julia walks through how to build features from text for tidy-modeling. I learned a lot, got inspired, and made this post.
 
-I this GitHub repo I aimto build a Supervised Machine Learning Classification Model that can predict the type of whether a item in the Netflix catalog is either a TV-Show or a Movie based on the description and/or the title.
+I this GitHub repo I aim to build a Supervised Machine Learning Classification Model that can predict the type of whether a item in the Netflix catalog is either a TV-Show or a Movie based on the description and/or the title.
 
 In doing so, I would like to practice using the `tidymodels` and `textrecipes` R packages by:
 
@@ -436,14 +437,23 @@ svm_spec <- svm_linear() %>%
 
 ## Define worlflow set
 
+    -   using only tokens from description
+    -   using tokens from description + tokens from title
+    -   using n-grams from description
+    -   using tokens from description + sub-word features from the title
+
 ```{r workflow_set}
 
-# Define workflow
-netflix_wf <- workflow() %>%
-  # add recipe
-  add_recipe(netflix_rec) %>%
-  # add model
-  add_model(svm_spec)
+# Define workflow_set
+netflix_wf <- workflow_set(
+  # define the pre-processing recipes
+                preproc =list(base = netflix_rec1,
+                              tokens_desc_title = netflix_rec2,
+                              ngrams_desc = netflix_rec3,
+                              tokens_desc_subwork_title = netflix_rec4) ,
+  # define the models: in this case only 1
+                models = list(svm_spec)
+)
 
 # Print workflow
 netflix_wf
