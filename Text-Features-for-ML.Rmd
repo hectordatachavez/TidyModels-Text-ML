@@ -21,6 +21,7 @@ library(textrecipes)
 library(workflowsets)
 library(themis)
 library(ggtext)
+library(patchwork)
 theme_set(theme_light())
 
 # At the time of making this script (April 2021), the SVM model was only available in the GitHub, development version of the parsnip package. 
@@ -437,11 +438,6 @@ svm_spec <- svm_linear() %>%
 
 ## Define worlflow set
 
-    -   using only tokens from description
-    -   using tokens from description + tokens from title
-    -   using n-grams from description
-    -   using tokens from description + sub-word features from the title
-
 ```{r workflow_set}
 
 # Define workflow_set
@@ -479,49 +475,91 @@ svm_rs <- netflix_wf %>%
                metrics = metric_set(accuracy, recall, precision),
               # save the predictions from the model to make a confusion matrix
               control = control_resamples(save_pred = TRUE),
-               verbose = TRUE)
+              verbose = TRUE)
 
-
-# Fit the workflow to the CV folds of the training data
-# svm_rs <- fit_resamples(
-#   # Pass the workflow
-#   netflix_wf,
-#   # to the folds
-#   netflix_folds,
-#   # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
-#   metrics = metric_set(accuracy, recall, precision),
-#   # save the preductions from the model to make a confusion matrix
-#   control = control_resamples(save_pred = TRUE)
-# )
 ```
 
 
-## Model Performance
+## Model Performance & Model Selection
+
+Model recipe 4 and 1 perform best out of the recipes here defined (based on accuracy, precision, and recall).
+
 
 ```{r model_performance}
-# Get the metrics from the model
+
+## Get the metrics
+# Returns a tibble with accuracy precision and recall for each recipe
 collect_metrics(svm_rs)
 
-# We can use conf_mat_resampled() to compute a separate confusion matrix for each resample, and then average the cell counts
-svm_rs %>%
-  conf_mat_resampled(tidy = FALSE) %>%
-  autoplot()
+# Plot results for the three models
+autoplot(svm_rs)
+
+# Rank recipes based on metrics
+svm_rs %>% 
+  rank_results()
+
+
+
+
+## Collect predictions
+# Returns a large tibble with .pred_class for each recipe
+one <- collect_predictions(svm_rs) %>%
+  # get only predictions for the best model
+  filter(wflow_id == "base_svm_linear") %>%
+  # get the confusion matrix
+  conf_mat(truth = type, estimate = .pred_class) %>%
+  # plot confusion matrix
+  autoplot() +
+  labs(
+     title = "Recipe 1: tokens from description"
+   )
+
+
+# Returns a large tibble with .pred_class for each recipe
+four <- collect_predictions(svm_rs) %>%
+  # get only predictions for the second-best model
+  filter(wflow_id == "tokens_desc_subwork_title_svm_linear") %>%
+  # get the confusion matrix
+  conf_mat(truth = type, estimate = .pred_class) %>%
+  # plot confusion matrix
+  autoplot() +
+  labs(
+     title = "Recipe 4: tokens from description + sub-word features from title"
+   )
+
+
+# Set plot canvas
+patwork_confmat <- one + four
+
+# Print plots
+patwork_confmat + plot_annotation(
+  title = 'CONFUSION MATRIX'
+  )
 
 ```
+
+Model 1 predicting type based on tokens from the description--the original from Julia Silge's [post](https://juliasilge.com/blog/netflix-titles/)--is the simplest and thus the preferred best of this set.
+
 
 ## Final Model Fit
 
 ```{r final_model_fit}
-# Fit our model on last time to the whole training set (rather than resampled data) and evaluate on the testing set.
+# Fit our model on last time to the whole training set and evaluate on the testing set.
+
+# Select best from workflow set
+best_recipe <- svm_rs %>%
+            pull_workflow_set_result("base_svm_linear") %>%
+            select_best()
+
 
 # The last fit function does the model training and the testing automatically, following the workflow defined
-final_fitted <- last_fit(
-  netflix_wf_comb,
-  # contains the training and the testing datasets
-  netflix_split_comb,
-  # define custom metrics
-  metrics = metric_set(accuracy, recall, precision)
-)
+final_fitted <- svm_rs %>%
+            pull_workflow("base_svm_linear") %>%
+            finalize_workflow(best_recipe) %>%
+            last_fit(split = netflix_split,
+                # define custom metrics
+                metrics = metric_set(accuracy, recall, precision)
+              )
 
 ```
 
