@@ -42,7 +42,7 @@ In doing so, I would like to practice using the `tidymodels` and `textrecipes` R
 
     -   tokens from description
     -   tokens from description + tokens from title
-    -   bi-grams from description
+    -   n-grams from description
     -   tokens from description + sub-word features from the title
 
 -   Set up a SVM classification model to predict type (TV-Show or Movie) that trains, test, and compare all recipes
@@ -277,13 +277,15 @@ netflix_titles %>%
 
 ## Set up for tidy-modeling
 
+We first define the split in the original data into training and testing set (75%, 25%, rexpectively). Then, we define the cross-validation folds in the training set.
+
 ```{r model_prep, echo=FALSE, warning=FALSE}
 
 # Set seed for reproducibility
 set.seed(123)
 # Define the splits in the data
 netflix_split <- netflix_titles %>%
-  select(type, description) %>%
+  select(type, description, title) %>%
   # stratify split samples by type (TV Shows vs Movie). The sample is not balanced (not a 50:50 split). Thus, we must take care that the splitting is balanced.
   # The inital split is 3/4 to training, 1/4 to testing
   initial_split(strata = type)
@@ -300,13 +302,26 @@ set.seed(234)
 netflix_folds <- vfold_cv(netflix_train, strata = type)
 
 # Print the sample division by fold
-# netflix_folds
+netflix_folds
 ```
 
-```{r original_model_recipe, echo=FALSE, warning=FALSE}
+
+## Define model recipes
+
+We will define four model recipes:
+    -   using only tokens from description
+    -   using tokens from description + tokens from title
+    -   using n-grams from description
+    -   using tokens from description + sub-word features from the title
+
+For all recipes, we will use `step_smote` on type. This function generates new examples of the minority class using nearest neighbors of these cases. It helps us create new data as the dataset is unbalanced: move movies than TV shows.
+
+
+```{r model_recipes, echo=FALSE, warning=FALSE}
 # create our feature engineering recipe and our model, and then put them together in a modeling workflow
 
-netflix_rec <- 
+# Recipe 1: using only tokens from description
+netflix_rec1 <- 
   # Define the model and the (training) data
   recipe(type ~ description, data = netflix_train) %>%
   # Define the steps of processing
@@ -319,14 +334,96 @@ netflix_rec <-
   # normalize all 0-1 columns
   step_normalize(all_numeric_predictors()) %>%
   # generate new examples of the minority class using nearest neighbors of these cases
-  # This steps serves to create new data as the dataset is unbalances: move movies than TV shows
+  step_smote(type)
+
+# Print the recipe
+netflix_rec1
+
+
+
+# Recipe 2: using only tokens from description + tokens from title
+netflix_rec2 <- 
+  # Define the model and the (training) data
+  recipe(type ~ description + title, data = netflix_train) %>%
+  # Define the steps of processing
+  # tokenize text
+  step_tokenize(description, title) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(description, title, max_tokens = 1e3) %>%
+  # convert tokelist into a term-frequency-inverse document freq (columns with 0-1)
+  step_tfidf(description, title) %>%
+  # normalize all 0-1 columns
+  step_normalize(all_numeric_predictors()) %>%
+  # generate new examples of the minority class using nearest neighbors of these cases
+  step_smote(type)
+
+# Print the recipe
+netflix_rec2
+
+
+# Recipe 3: using n-grams from description
+netflix_rec3 <- 
+  # Define the model and the (training) data
+  recipe(type ~ description, data = netflix_train) %>%
+  # Define the steps of processing
+  # tokenize text
+  step_tokenize(description) %>%
+  # create n-grams: include mono and bi-grams
+  step_ngram(description, min_num_tokens = 1, num_tokens = 2) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(description, max_tokens = 1e3) %>%
+  # convert tokelist into a term-frequency-inverse (columns with 0-1)
+  step_tfidf(description) %>%
+  # normalize all 0-1 columns
+  step_normalize(all_numeric_predictors()) %>%
+  # generate new examples of the minority class using nearest neighbors of these cases
+  step_smote(type)
+
+# Print the recipe
+netflix_rec3
+
+
+
+
+netflix_rec4 <- 
+  # Define the model and the (training) data
+  # Type is explained by the text in description and in title
+  recipe(type ~ description + title, data = netflix_train) %>%
+  # Define the steps of processing
+  # tokenize text in description
+  step_tokenize(description) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(description, max_tokens = 1e3) %>%
+  # convert tokelist into a term-frequency-inverse document freq (columns with 0-1)
+  step_tfidf(description) %>%
+  # tokenize
+  step_tokenize(title,
+    engine = "tokenizers.bpe",
+    training_options = list(vocab_size = 200)
+  ) %>%
+  # filter tokenlist based on frequency
+  step_tokenfilter(title, max_tokens = 200) %>%
+  # convert tokelist into a term-frequency (columns with 0-1)
+  step_tfidf(title) %>%
+  # normalize all 0-1 columns
+  step_normalize(all_numeric_predictors()) %>%
+  # step_smote generates new examples of the minority class using nearest neighbors of these cases
   step_smote(type)
 
 
 # Print the recipe
-# netflix_rec
+netflix_rec4
 
 
+```
+
+## Define model: tye and engine
+
+For this project, we will use one model: [a linear support-vector machine classification model](https://parsnip.tidymodels.org/reference/svm_linear.html). All recipes defines above will be passed to this model.
+
+At the time of making this script (April 2021), the SVM model was only available in the GitHub, development version of the parsnip package.
+
+```{r define_model_svm}
 # Define the model used to predict type by description tokens
 # SVM linear
 svm_spec <- svm_linear() %>%
@@ -334,10 +431,12 @@ svm_spec <- svm_linear() %>%
   set_engine("LiblineaR") %>%
   # define more to classification (categorical prediction)
   set_mode("classification")
-
 ```
 
-```{r original_workflow_set}
+
+## Define worlflow set
+
+```{r workflow_set}
 
 # Define workflow
 netflix_wf <- workflow() %>%
@@ -347,9 +446,13 @@ netflix_wf <- workflow() %>%
   add_model(svm_spec)
 
 # Print workflow
-# netflix_wf
+netflix_wf
 
 
+```
+
+## Fit model
+```{r fit_svm2workflow}
 # Set up parallel processing
 doParallel::registerDoParallel()
 
@@ -369,108 +472,6 @@ svm_rs <- fit_resamples(
 )
 ```
 
-```{r model_prep_comb, echo=FALSE, warning=FALSE}
-
-# Set seed for reproducibility
-set.seed(1234)
-# Define the splits in the data
-netflix_split_comb <- netflix_titles %>%
-  select(type, description, title) %>%
-  # stratify split samples by type (TV Shows vs Movie). The sample is not balanced (not a 50:50 split). Thus, we must take care that the splitting is balanced.
-  # The inital split is 3/4 to training, 1/4 to testing
-  initial_split(strata = type)
-
-# Define the training set
-netflix_train_comb <- training(netflix_split_comb)
-# Define the testing set
-netflix_test_comb <- testing(netflix_split_comb)
-
-
-# Set seed for reproducibility
-set.seed(2345)
-# Define the CV folds in the training dataset, stratified again by type
-netflix_folds_comb <- vfold_cv(netflix_train_comb, strata = type)
-
-# Print the sample division by fold
-# netflix_folds_comb
-
-```
-
-```{r model_recipe_comb}
-
-# In this model recipe, I'm combining the tokens from description with the sub-word level tokens for predicting type
-
-netflix_rec_comb <- 
-  # Define the model and the (training) data
-  # Type is explained by the text in description and in title
-  recipe(type ~ description + title, data = netflix_train_comb) %>%
-  # Define the steps of processing
-  # tokenize text in description
-  step_tokenize(description) %>%
-  # filter tokenlist based on frequency
-  step_tokenfilter(description, max_tokens = 1e3) %>%
-  # convert tokelist into a term-frequency-inverse document freq (columns with 0-1)
-  step_tfidf(description) %>%
-  # tokenize
-  step_tokenize(title,
-    engine = "tokenizers.bpe",
-    training_options = list(vocab_size = 200)
-  ) %>%
-  # filter tokenlist based on frequency
-  step_tokenfilter(title, max_tokens = 200) %>%
-  step_tf(title) %>%
-  # normalize all 0-1 columns
-  step_normalize(all_numeric_predictors()) %>%
-  # step_smote generates new examples of the minority class using nearest neighbors of these cases
-  # This steps serves to create new data as the dataset is unbalances: move movies than TV shows
-  step_smote(type)
-
-
-# Print the recipe
-netflix_rec_comb
-
-
-# Define the model used to predict type by description tokens
-# SVM linear
-svm_spec <- svm_linear() %>%
-  # set engine to linear SVM
-  set_engine("LiblineaR") %>%
-  # define more to classification (categorical prediction)
-  set_mode("classification")
-```
-
-```{r workflow_set_comb}
-
-# Define workflow
-netflix_wf_comb <- workflow() %>%
-  # add recipe
-  add_recipe(netflix_rec_comb) %>%
-  # add model
-  add_model(svm_spec)
-
-# Print workflow
-# netflix_wf_comb
-
-
-# Set up parallel processing
-doParallel::registerDoParallel()
-
-# set seed for reproducibility
-set.seed(3456)
-# Fit the workflow to the CV folds of the training data
-svm_rs <- fit_resamples(
-  # Pass the workflow
-  netflix_wf_comb,
-  # to the folds
-  netflix_folds_comb,
-  # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
-  metrics = metric_set(accuracy, recall, precision),
-  # save the preductions from the model to make a confusion matrix
-  control = control_resamples(save_pred = TRUE)
-)
-
-
-```
 
 ## Model Performance
 
