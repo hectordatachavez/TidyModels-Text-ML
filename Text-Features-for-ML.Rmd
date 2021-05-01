@@ -1,5 +1,5 @@
 ---
-title: 'Building features from text to predicting classes'
+title: 'Building features from text to predicting classes with Tidy-Models'
 output: github_document
 editor_options: 
   chunk_output_type: console
@@ -9,24 +9,24 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Which \#TidyTuesday Netflix titles are movies and which are TV shows?
+## Background
 
-This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of the fabulous [Julia Silge](https://github.com/juliasilge?tab=repositories). In that post, Julia walks through how to build features from text for tidy-modeling. I learned a lot, got inspired, and made this post.
+This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of the fabulous :star2:[Julia Silge](https://github.com/juliasilge?tab=repositories) :star2:. In that post, Julia walks through how to build features from text for tidy-modeling. I learned a lot, got inspired, and made this post. Thank you, Julia :unicorn:.
 
-I this GitHub repo I aim to build a Supervised Machine Learning Classification Model that can predict the type of whether a item in the Netflix catalog is either a TV-Show or a Movie based on the description and/or the title.
+Here, I aim to build a *Supervised Machine Learning Classification Model* that can predict the type of whether a item in the Netflix catalog is either a TV-Show or a Movie based on the description and/or the title.
 
-In doing so, I would like to practice using the `tidymodels` and `textrecipes` R packages by:
+In doing so, I would practice using the [`tidymodels`](https://www.tmwr.org/) and [`textrecipes`](https://github.com/tidymodels/textrecipes) R packages by:
 
--   Building features from description text
+-   Building features from text
 
--   Prepare different model recipes (`workflowsets`) based on these features from text
+-   Prepare different model recipes based on these features from text
 
     -   tokens from description
     -   tokens from description + tokens from title
     -   n-grams from description
     -   tokens from description + sub-word features from the title
 
--   Set up a SVM classification model to predict type (TV-Show or Movie) that trains, test, and compare all recipes
+-   Set up a SVM classification model to predict type (TV-Show or Movie) that trains, test, and compare all recipes ([`workflowsets`](https://github.com/tidymodels/workflowsets))
 
 -   Compare models performance after 10-fold cross-validation
 
@@ -34,9 +34,9 @@ In doing so, I would like to practice using the `tidymodels` and `textrecipes` R
 
 -   Plot feature importance
 
-The data used for this project is the [week 17 dataset on Netflix Titles](https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-04-20/readme.md) of the [\#TidyTuesday](https://github.com/rfordatascience/tidytuesday).
+Let's get staRted !
 
-```{r setup_libraries, warning=FALSE, echo=FALSE, message=FALSE}
+```{r setup_libraries, warning=FALSE,  message=FALSE}
 
 # Load libraries
 library(tidyverse)
@@ -56,7 +56,9 @@ theme_set(theme_light())
 
 ## Load Data
 
-```{r load_data, echo=FALSE, warning=FALSE, message=FALSE}
+The data used for this project is the [week 17 dataset on Netflix Titles](https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-04-20/readme.md) of the [\#TidyTuesday](https://github.com/rfordatascience/tidytuesday).
+
+```{r load_data, warning=FALSE, message=FALSE}
 
 # Load data from netflix movie and TV show titles from the tidyverse
 netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-20/netflix_titles.csv")
@@ -65,9 +67,13 @@ netflix_titles <- read_csv("https://raw.githubusercontent.com/rfordatascience/ti
 
 ## Explore Data
 
-There are more Movies than TV-shows in the dataset.
+There are more Movies than TV-shows in the data (5 447 to 2 410, respectively).
 
-```{r explore_data, echo=FALSE, warning=FALSE, message=FALSE}
+All items have a description of about the same length.
+
+Titles often contain only numbers, dates, special characters—some in languages other than English.
+
+```{r explore_data, warning=FALSE, message=FALSE}
 
 # How many titles in the dataset?
 netflix_titles %>%
@@ -87,11 +93,9 @@ netflix_titles %>%
 
 ### Description field
 
-This column contains the description of the Movies and TV Shows: are all around 150 characters long.
+This column contains the description of the Movies and TV Shows: are all around 150 characters long. The histogram of the number of characters per description by type also highlights the issue of balance in the sample: there are more movies than TV Shows.
 
-A histogram of the number of characters per description by type also highlights the issue of balance in the sample: there are more movies than TV Shows.
-
-```{r data_exploration_plot, echo=FALSE, warning=FALSE, message=FALSE}
+```{r data_exploration_plot, warning=FALSE, message=FALSE}
 
 # Histogram of number of characters per description by type
 netflix_titles %>%
@@ -111,7 +115,7 @@ netflix_titles %>%
 
 Word frequency analysis of the description field show some differences in the top words for each category as well as some similarities.
 
-```{r data_exploration_description_plot, echo=FALSE, warning=FALSE, message=FALSE}
+```{r data_exploration_description_plot,  warning=FALSE, message=FALSE}
 
 # What are the top words in the description each category (Movie, TV Show)?
 netflix_titles %>%
@@ -147,7 +151,7 @@ netflix_titles %>%
 
 #### Bi-grams in the description field
 
-We can also tokenize text into consecutive sequences of words, called `n-grams`. This way, we can use how often word X is followed by word Y in model building.
+We can also tokenize text into consecutive sequences of words, called `n-grams`. This way, we can use how often word *X* is followed by word *Y* in model building.
 
 ```{r data_exploration_description_bigram_plot}
 # What are the top words in the description each category (Movie, TV Show)?
@@ -192,7 +196,7 @@ netflix_titles %>%
 
 Words in the title of the TV Show or Movie are not unique to each category. "Love", for example, is one of the frequent word in the titles of both movies and TV shows. Similarly with "world", "life", "little", "one". This field does not seem to contain enough information to help a model differentiate TV Shows from Movies based on the title.
 
-```{r data_exploration_title_plot, echo=FALSE, warning=FALSE}
+```{r data_exploration_title_plot,  warning=FALSE}
 
 # What are the top words in the title of each category (Movie, TV Show)?
 netflix_titles %>%
@@ -275,7 +279,7 @@ netflix_titles %>%
 
 We first define the split in the original data into training and testing set (75% and 25%, respectively). Then, we define the cross-validation folds in the training set.
 
-```{r model_prep, echo=FALSE, warning=FALSE}
+```{r model_prep,  warning=FALSE}
 
 # Set seed for reproducibility
 set.seed(123)
@@ -313,9 +317,9 @@ We will define four model recipes:
 
 -   recipe 4: using tokens from description + sub-word features from the title
 
-For all recipes, we will use `step_smote` on type. This function generates new examples of the minority class using nearest neighbors of these cases. It helps us create new data as the dataset is unbalanced: move movies than TV shows.
+For all recipes, we will use [`step_smote`](https://themis.tidymodels.org/reference/step_smote.html) on type. This function generates new examples of the minority class using nearest neighbors of these cases. It helps us create new data as the dataset is unbalanced: move movies than TV shows.
 
-```{r model_recipes, echo=FALSE, warning=FALSE, message=FALSE}
+```{r model_recipes,  warning=FALSE, message=FALSE}
 # create our feature engineering recipe and our model, and then put them together in a modeling workflow
 
 # Recipe 1: using only tokens from description
@@ -422,7 +426,8 @@ For this project, we will use one model: [a linear support-vector machine classi
 At the time of making this script (April 2021), the SVM model was only available in the GitHub, development version of the parsnip package.
 
 ```{r define_model_svm}
-# Define the model used to predict type by description tokens
+#devtools::install_github("tidymodels/parsnip")
+
 # SVM linear
 svm_spec <- svm_linear() %>%
   # set engine to linear SVM
@@ -494,7 +499,6 @@ svm_rs %>%
 
 
 
-
 ## Collect predictions
 # Returns a large tibble with .pred_class for each recipe
 collect_predictions(svm_rs) %>%
@@ -522,17 +526,9 @@ collect_predictions(svm_rs) %>%
    )
 
 
-# Set plot canvas
-# patwork_confmat <- one + four
-# 
-# # Print plots
-# patwork_confmat + plot_annotation(
-#   title = 'CONFUSION MATRIX'
-#   )
-
 ```
 
-Model 1 predicting type based on tokens from the description--the original from Julia Silge's [post](https://juliasilge.com/blog/netflix-titles/)--is the simplest and thus the preferred best of this set.
+Model 1 predicting type based on tokens from the description—the original from Julia Silge's [post](https://juliasilge.com/blog/netflix-titles/)—is the simplest and thus the preferred best of this set.
 
 ## Final Model Fit
 
