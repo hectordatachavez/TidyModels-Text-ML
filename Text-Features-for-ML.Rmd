@@ -467,19 +467,32 @@ netflix_wf
 doParallel::registerDoParallel()
 
 # set seed for reproducibility
-set.seed(123)
+set.seed(12345)
+
+svm_rs <- netflix_wf %>%
+  # The first argument is a function name from the {{tune}} package
+  # such as `tune_grid()`, `fit_resamples()`, etc.
+  workflow_map("fit_resamples",
+               # define the cross-validation folds
+               resamples = netflix_folds, 
+              # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
+               metrics = metric_set(accuracy, recall, precision),
+              # save the predictions from the model to make a confusion matrix
+              control = control_resamples(save_pred = TRUE),
+               verbose = TRUE)
+
 
 # Fit the workflow to the CV folds of the training data
-svm_rs <- fit_resamples(
-  # Pass the workflow
-  netflix_wf,
-  # to the folds
-  netflix_folds,
-  # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
-  metrics = metric_set(accuracy, recall, precision),
-  # save the preductions from the model to make a confusion matrix
-  control = control_resamples(save_pred = TRUE)
-)
+# svm_rs <- fit_resamples(
+#   # Pass the workflow
+#   netflix_wf,
+#   # to the folds
+#   netflix_folds,
+#   # linear SVM model does not support class probabilities, so we need to set a custom metric_set() that only includes metrics for hard class probabilities
+#   metrics = metric_set(accuracy, recall, precision),
+#   # save the preductions from the model to make a confusion matrix
+#   control = control_resamples(save_pred = TRUE)
+# )
 ```
 
 
