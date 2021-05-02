@@ -11,8 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Background
 
-This projects is inspired by the [Apr 23, 2021 screecast episode](https://www.youtube.com/watch?v=XYj8vyK864Y) of the fabulous :star2:[Julia Silge](https://github.com/juliasilge?tab=repositories) :star2:. In that post, Julia walks through how to build features from text for tidy-modeling. I learned a lot, got inspired, and made this post. Thank you, Julia :unicorn:.
-
 Here, I aim to build a *Supervised Machine Learning Classification Model* that can predict the type of whether a item in the Netflix catalog is either a TV-Show or a Movie based on the description and/or the title.
 
 In doing so, I would practice using the [`tidymodels`](https://www.tmwr.org/) and [`textrecipes`](https://github.com/tidymodels/textrecipes) R packages by:
